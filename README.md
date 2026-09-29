@@ -83,6 +83,20 @@ Seçenekler:
 * `<KLP>.json` – CablePlan plan dosyası. Workspace'teki `data/` klasörüne PDF ile aynı isimle koyulur.
 * `<KLP>_bericht.csv` – Excel'de açılabilen rapor (Kabel; Von; Nach; Länge KÜP; Länge Weg; Sicherheit; Hinweise).
 
+## CablePlan içinden kullanım
+
+CablePlan'de **Zeichnen** panelinde **"Kabelwege automatisch zeichnen (KÜP)"** düğmesi var:
+
+1. Kabellageplanı aç, düğmeye bas, KÜP PDF'ini seç (veya KÜP'süz devam et).
+2. Program bu aracı arka planda çalıştırır (~1–2 dk).
+3. Planda **henüz çizili olmayan** kablolar eklenir. **Mevcut (elle çizilmiş) kablolara dokunulmaz.**
+4. Özet penceresinde kontrol edilmesi gereken kablolar listelenir; rapor
+   `data/<Plan>_autorouting_bericht.csv` olarak workspace'e kaydedilir.
+
+İlk kullanımda Python bulunamazsa veya paket kurulu değilse CablePlan sorar: bu repo'nun klasörünü
+(ve gerekirse `python.exe`) seçmek yeterli. Ayar `⚙` düğmesiyle sonradan değiştirilebilir
+(`%LOCALAPPDATA%\CablePlan\autoroute_settings.json`).
+
 ## Örnek sonuç (samples/)
 
 KÜP 10/16'daki 53 kablonun 48'i için yol çizildi. Çoğunda yol uzunluğu KÜP uzunluğuna çok yakın
