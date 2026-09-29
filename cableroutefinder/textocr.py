@@ -29,11 +29,18 @@ def _configure_tesseract() -> None:
         return
     if shutil.which("tesseract"):
         return
-    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
-                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
-                 os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")):
-        cand = os.path.join(base, "Tesseract-OCR", "tesseract.exe")
-        if base and os.path.exists(cand):
+    local = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Tesseract-OCR", "tesseract.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Tesseract-OCR", "tesseract.exe"),
+        os.path.join(local, "Programs", "Tesseract-OCR", "tesseract.exe"),
+        os.path.join(local, "Tesseract-OCR", "tesseract.exe"),
+        r"C:\Tesseract-OCR\tesseract.exe",
+        r"C:\ProgramData\chocolatey\bin\tesseract.exe",
+        os.path.join(os.path.expanduser("~"), "scoop", "shims", "tesseract.exe"),
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand):
             pytesseract.pytesseract.tesseract_cmd = cand
             return
 
