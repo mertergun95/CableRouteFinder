@@ -45,6 +45,10 @@ def test_kuep_cables(result):
     assert c.from_name == "KS 1307000"
     assert c.to_name == "13W22/13G4004"
     assert c.length_m == 110
+    # "70" wurde von der OCR als "710" gelesen (1/7-Korrektur über die Zeichengeometrie)
+    assert next(c for c in result.kuep.cables if c.cable_id == "S1307020").length_m == 70
+    # Fortsetzungsleiste (A/W) des Kabelschranks erbt dessen Namen
+    assert all(c.from_name for c in result.kuep.cables)
 
 
 @needs_tesseract

@@ -68,6 +68,51 @@ def _is_axis_rect(p: Primitive) -> bool:
     return bool(on_edge.all())
 
 
+def _char_clusters(line: TextLine) -> list[list[Primitive]]:
+    """Zeichen einer waagerechten Zeile: Primitive mit überlappendem x-Bereich zusammenfassen."""
+    prims = sorted(line.prims, key=lambda p: p.bbox[0])
+    chars: list[list[Primitive]] = []
+    right = -1e9
+    for p in prims:
+        if chars and p.bbox[0] <= right + 0.3:
+            chars[-1].append(p)
+            right = max(right, p.bbox[2])
+        else:
+            chars.append([p])
+            right = p.bbox[2]
+    return chars
+
+
+def _looks_like_seven(char: list[Primitive], top: float, height: float) -> bool:
+    """'7' hat oben einen waagerechten Balken, '1' nicht."""
+    for p in char:
+        for pl in p.polylines:
+            for a, b in zip(pl[:-1], pl[1:]):
+                if abs(a[1] - b[1]) < 0.15 * height and min(a[1], b[1]) - top < 0.25 * height \
+                        and abs(a[0] - b[0]) > 0.35 * height:
+                    return True
+    return False
+
+
+def fix_digits_1_7(line: TextLine) -> str:
+    """Korrigiert die typische OCR-Verwechslung 1/7 (und "71" für "7") dieser CAD-Schrift
+    anhand der Zeichengeometrie."""
+    text = _clean(line.text)
+    chars = _char_clusters(line)
+    if len(text) == len(chars) + 1 and "71" in text:
+        text = text.replace("71", "7", 1)
+    if len(text) != len(chars):
+        return text
+    top = line.bbox[1]
+    height = max(line.bbox[3] - line.bbox[1], 0.1)
+    out = []
+    for ch, c in zip(text, chars):
+        if ch in "17":
+            ch = "7" if _looks_like_seven(c, top, height) else "1"
+        out.append(ch)
+    return "".join(out)
+
+
 def _is_long_axis_stroke(p: Primitive) -> bool:
     """Waagerechte/senkrechte Einzelstriche > 6,5 pt sind Kabellinien oder Teilstriche, keine Schrift."""
     if p.size < 6.5 or len(p.polylines) != 1 or len(p.polylines[0]) != 2:
@@ -171,12 +216,14 @@ def parse_kuep(pv: PageVectors, log=print) -> KuepResult:
                    and l.bbox[2] >= x0 - 40 and l.bbox[0] <= x1 + 80 and not l.text.startswith("(")]
             b.name = _row_text(row)
     # Hohe Sammelkästen ohne Namen (Fortsetzung über ①/②) erben den Namen des vorherigen
-    tall = sorted([b for b in boxes if b.height > pv.height * 0.3], key=lambda b: b.bbox[0])
+    # (Leisten S/A/W eines Kabelschranks, Fortsetzung über ①/②), in Leserichtung sortiert.
+    tall = sorted([b for b in boxes if b.height > pv.height * 0.15],
+                  key=lambda b: (round(b.bbox[0] / 20), b.bbox[1]))
     last = ""
     for b in tall:
-        if b.name and re.search(r"\d{3,}", b.name):
+        if b.name.upper().startswith("KS"):
             last = b.name
-        elif last:
+        elif not b.name and last:
             b.name = last
     res.boxes = boxes
 
@@ -261,7 +308,7 @@ def parse_kuep(pv: PageVectors, log=print) -> KuepResult:
             above = [m for m in lines if _LENGTH_RE.match(_clean(m.text)) and y - 10 <= m.bbox[3] <= y + 0.5
                      and x0 < m.bbox[0] < x1 and m.bbox[0] > tx1]
             if above:
-                cable.length_m = float(_clean(min(above, key=lambda m: m.bbox[0] - tx1).text))
+                cable.length_m = float(fix_digits_1_7(min(above, key=lambda m: m.bbox[0] - tx1)))
             below = [m for m in lines if _SECTION_RE.match(_clean(m.text).replace(" ", ""))
                      and y - 0.5 <= m.bbox[1] <= y + 10 and abs(m.bbox[0] - tx0) < 5]
             if below:

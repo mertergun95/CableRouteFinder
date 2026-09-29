@@ -108,8 +108,10 @@ def _outline_dash_centerline(p: Primitive) -> Primitive | None:
                      polylines=[np.array([a, b])], bbox=p.bbox)
 
 
-def _collinear_neighbors(prims: list[Primitive], max_gap: float = 6.0, max_angle_deg: float = 8.0) -> list[Primitive]:
-    """Behält nur Striche, die einen fluchtenden Nachbarstrich haben (Strichlinie statt Schrift)."""
+def _collinear_neighbors(prims: list[Primitive], max_gap: float = 6.0, max_angle_deg: float = 8.0,
+                         min_run: int = 2) -> list[Primitive]:
+    """Behält nur Striche, die in einer Reihe fluchtender Striche liegen (Strichlinie statt Schrift).
+    ``min_run``: Mindestanzahl Striche je Reihe."""
     from scipy.spatial import cKDTree
     if not prims:
         return []
@@ -120,7 +122,7 @@ def _collinear_neighbors(prims: list[Primitive], max_gap: float = 6.0, max_angle
         owner += [i, i]
     tree = cKDTree(np.array(ends))
     cos_tol = np.cos(np.radians(max_angle_deg))
-    keep = set()
+    pairs: list[tuple[int, int]] = []
     for i, p in enumerate(prims):
         a, b = p.polylines[0][0], p.polylines[0][-1]
         d = b - a
@@ -139,29 +141,61 @@ def _collinear_neighbors(prims: list[Primitive], max_gap: float = 6.0, max_angle
                 w = ends[j] - a
                 off = abs(d[0] * w[1] - d[1] * w[0])
                 if off < 0.8:
-                    keep.add(i)
-                    keep.add(k)
+                    pairs.append((i, k))
                     break
-    return [prims[i] for i in sorted(keep)]
+    # Reihen (Zusammenhangskomponenten) mit genügend Strichen behalten
+    parent = list(range(len(prims)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a, b in pairs:
+        parent[find(a)] = find(b)
+    sizes: dict[int, int] = {}
+    for a, b in pairs:
+        for n in (a, b):
+            sizes[find(n)] = 0
+    members = {n for ab in pairs for n in ab}
+    for n in members:
+        sizes[find(n)] += 1
+    return [prims[i] for i in sorted(members) if sizes[find(i)] >= min_run]
 
 
-def trasse_primitives(pv: PageVectors, style: KlpStyle) -> tuple[list[Primitive], list[Primitive]]:
-    """Liefert (Trassenstriche, Kanalstriche)."""
+def trasse_primitives(pv: PageVectors, style: KlpStyle, labels: list["CableLabel"] | None = None,
+                      exclude: set[int] | None = None) -> tuple[list[Primitive], list[Primitive]]:
+    """Liefert (Trassenstriche, Kanalstriche).
+
+    Kanalstriche (Doppel-Strichlinien, z. B. Querungen unter den Gleisen) können dieselbe
+    Strichstärke wie die Beschriftung haben. Deshalb werden sie über ihre Form erkannt
+    (fluchtende Striche in einer Reihe), nicht nur über die Strichstärke; Schrift der
+    Kabelnummern-Stapel (``labels``/``exclude``) wird vorher ausgenommen."""
+    exclude = exclude or set()
+    boxes = [(l.bbox[0] - 2, l.bbox[1] - 2, l.bbox[2] + 2, l.bbox[3] + 2) for l in (labels or [])]
+
+    def in_label(p: Primitive) -> bool:
+        x0, y0, x1, y1 = p.bbox
+        return any(x0 >= b[0] and y0 >= b[1] and x1 <= b[2] and y1 <= b[3] for b in boxes)
+
     trasse: list[Primitive] = []
     if style.trasse_width is not None:
         trasse = [p for p in pv.primitives if p.color == RED and not p.filled
                   and abs(p.width - style.trasse_width) < 0.03]
-    # Umriss-Striche (Strichstärke 0)
+    # Als Umriss oder gefüllte Fläche gezeichnete Striche (Strichstärke 0) auf ihre Mittellinie
+    # reduzieren; nur Reihen fluchtender Striche gelten als Trasse (nicht Symbolteile).
+    outline = []
     for p in pv.primitives:
-        if p.color == RED and not p.filled and p.width < 0.05:
+        if p.color == RED and p.width < 0.05 and p.index not in exclude:
             c = _outline_dash_centerline(p)
             if c is not None:
-                trasse.append(c)
-    kanal: list[Primitive] = []
-    if style.kanal_width is not None:
-        cand = [p for p in pv.primitives if p.color == RED and not p.filled
-                and abs(p.width - style.kanal_width) < 0.03 and _dash_like(p, 1.5, 12.0)]
-        kanal = _collinear_neighbors(cand)
+                outline.append(c)
+    trasse += _collinear_neighbors(outline, min_run=3)
+    cand = [p for p in pv.primitives if p.color == RED and not p.filled and p.width > 0
+            and (style.trasse_width is None or abs(p.width - style.trasse_width) >= 0.03)
+            and p.index not in exclude and _dash_like(p, 1.5, 12.0) and not in_label(p)]
+    kanal = _collinear_neighbors(cand, min_run=3)
     return trasse, kanal
 
 
@@ -338,15 +372,15 @@ def extract_elements(pv: PageVectors, style: KlpStyle, exclude: set[int] | None 
     for p in pv.primitives:
         if p.color != RED or p.filled or p.size >= 14 or p.width <= 0 or p.index in exclude:
             continue
-        if style.label_width is not None and abs(p.width - style.label_width) < 0.03:
-            continue
         groups.setdefault(round(p.width, 2), []).append(p)
     lines: list[TextLine] = []
     for w, prims in groups.items():
-        # dünne Schrift ist klein und eng gesetzt, dickere Schrift größer (KS-Bezeichnungen)
-        gap, max_size = (0.9, 9.0) if w < 0.45 else (2.2, 14.0)
-        prims = [p for p in prims if p.size < max_size]
-        lines += [l for l in find_text_lines(prims, char_gap=gap, min_glyphs=2)]
+        # Kleine, eng gesetzte Schrift (W22/G4004) und große Schrift (KS 1307000) können dieselbe
+        # Strichstärke haben – beide Zeichenabstände versuchen, die Zuordnung sortiert später aus.
+        passes = [(0.9, 9.0)] if w < 0.45 else [(0.9, 9.0), (2.2, 14.0)]
+        for gap, max_size in passes:
+            sel = [p for p in prims if p.size < max_size]
+            lines += [l for l in find_text_lines(sel, char_gap=gap, min_glyphs=2)]
     ocr_lines(lines)
     lines = [l for l in lines if l.text and l.conf >= 30]
 

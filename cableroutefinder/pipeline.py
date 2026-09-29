@@ -82,13 +82,14 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
     style = style or detect_style(pv)
     log(f"KLP-Ebenen: Trasse={style.trasse_width} Kanal={style.kanal_width} Beschriftung={style.label_width}")
 
-    trasse, kanal = trasse_primitives(pv, style)
+    # Erst die Kabelnummern lesen: ihre Schrift darf weder als Kanal-Strich noch als Elementname gelten.
+    labels = extract_cable_labels(pv, style, log=log)
+    label_prims = {p.index for lab in labels for ln in lab.lines for p in ln.prims}
+    trasse, kanal = trasse_primitives(pv, style, labels=labels, exclude=label_prims)
     G = build_trasse_graph(trasse, kanal, pv.width, pv.height, graph_params)
     log(f"Trassennetz: {G.number_of_nodes()} Knoten, {G.number_of_edges()} Kanten, "
         f"{nx.number_connected_components(G)} Netzteile")
-
-    labels = extract_cable_labels(pv, style, log=log)
-    elements = extract_elements(pv, style, exclude={p.index for p in trasse + kanal}, log=log)
+    elements = extract_elements(pv, style, exclude=label_prims | {p.index for p in trasse + kanal}, log=log)
 
     kuep = None
     if kuep_path:
@@ -120,6 +121,9 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
         ep = Endpoint(name=name, element=find_element(elements, name))
         if ep.element is not None:
             ep.candidates = snap_candidates(G, ep.element.center, max_dist=endpoint_snap_pt)
+            if not ep.candidates:
+                # Beschriftung steht etwas weiter weg (z. B. KS-Name über dem Kasten)
+                ep.candidates = snap_candidates(G, ep.element.center, max_dist=2 * endpoint_snap_pt)
         endpoint_cache[name] = ep
         return ep
 
