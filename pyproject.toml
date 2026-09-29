@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cableroutefinder"
+version = "0.1.0"
+description = "Kabelwege aus dem Kabelübersichtsplan (KÜP) automatisch im Kabellageplan (KLP) finden und zeichnen"
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.24",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-image>=0.22",
+    "opencv-python-headless>=4.8",
+    "networkx>=3.2",
+    "pytesseract>=0.3.10",
+]
+
+[project.scripts]
+cableroutefinder = "cableroutefinder.__main__:main"
+
+[tool.setuptools]
+packages = ["cableroutefinder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
