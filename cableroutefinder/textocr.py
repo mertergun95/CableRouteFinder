@@ -19,6 +19,28 @@ import pytesseract
 from .pdfvector import Primitive
 
 
+def _configure_tesseract() -> None:
+    """Tesseract auch finden, wenn es unter Windows nicht im PATH steht (Standard beim Installer)."""
+    import os
+    import shutil
+    env = os.environ.get("TESSERACT_CMD")
+    if env and os.path.exists(env):
+        pytesseract.pytesseract.tesseract_cmd = env
+        return
+    if shutil.which("tesseract"):
+        return
+    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                 os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")):
+        cand = os.path.join(base, "Tesseract-OCR", "tesseract.exe")
+        if base and os.path.exists(cand):
+            pytesseract.pytesseract.tesseract_cmd = cand
+            return
+
+
+_configure_tesseract()
+
+
 @dataclass
 class TextLine:
     prims: list[Primitive]
