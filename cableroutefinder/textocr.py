@@ -10,6 +10,7 @@ Ablauf:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 import cv2
@@ -286,3 +287,42 @@ def _ocr_lines_batched(lines: list[TextLine], whitelist: str | None, target_heig
             ln.words = [w for _, w, _ in words]
             ln.text = " ".join(ln.words)
             ln.conf = float(np.mean([c for _, _, c in words])) if words else -1.0
+
+
+def detect_reading_rotation(pv, colors=("red", "black"), sample: int = 40, log=None) -> int:
+    """Wie viele Vierteldrehungen (im Uhrzeigersinn) die Seite braucht, damit die Schrift
+    waagerecht von links nach rechts liest (0–3).
+
+    1. Überwiegen senkrechte Textzeilen, kommen nur 90°/270° in Frage, sonst 0°/180°.
+    2. Zwischen den beiden Kandidaten entscheidet eine OCR-Probe der längsten Zeilen."""
+    from .pdfvector import PageVectors, rotate_vectors
+
+    glyphs = [p for p in pv.primitives if p.color in colors and not p.filled and p.size < 6.5
+              and p.bbox[0] >= 0 and p.bbox[1] >= 0 and p.bbox[2] <= pv.width and p.bbox[3] <= pv.height]
+    if not glyphs:
+        return 0
+    lines = [l for l in find_text_lines(glyphs, char_gap=1.2, merge_gap_factor=0.0) if len(l.prims) >= 6]
+    horiz = sum(len(l.prims) for l in lines if abs(l.angle) < 10)
+    vert = sum(len(l.prims) for l in lines if abs(abs(l.angle) - 90) < 10)
+    vertical = vert > horiz
+    candidates = (1, 3) if vertical else (0, 2)
+    pool = [l for l in lines if (abs(abs(l.angle) - 90) < 10) == vertical]
+    pool = sorted(pool, key=lambda l: -len(l.prims))[:sample]
+    if not pool:
+        return candidates[0]
+
+    scores = {}
+    for k in candidates:
+        sub = PageVectors(width=pv.width, height=pv.height, primitives=[p for l in pool for p in l.prims])
+        rot, _ = rotate_vectors(sub, k)
+        by_index = {p.index: p for p in rot.primitives}
+        test = [TextLine(prims=[by_index[p.index] for p in l.prims], bbox=(0, 0, 0, 0), angle=0.0) for l in pool]
+        for t in test:
+            t.bbox = union_bbox(t.prims)
+        ocr_lines(test, retry_below_conf=-1)
+        scores[k] = sum(max(t.conf, 0) for t in test if re.search(r"[A-Z0-9]{2,}", t.text or ""))
+    best = max(scores, key=scores.get)
+    if log:
+        log(f"Leserichtung: {'senkrecht' if vertical else 'waagerecht'}, Drehung {best * 90}° "
+            f"(Probe: {', '.join(f'{k * 90}°={v:.0f}' for k, v in scores.items())})")
+    return best

@@ -176,3 +176,68 @@ def load_page_vectors(pdf_path: str, page_index: int = 0) -> PageVectors:
         ))
     doc.close()
     return pv
+
+
+# ---------------------------------------------------------------------------
+# Arbeitsrichtung: Pläne werden oft gedreht gespeichert (/Rotate 90 …). Die Auswertung
+# läuft in der Richtung, in der die Schrift waagerecht liest; Ergebnisse werden danach
+# in den Anzeigeraum der Seite zurückgerechnet.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Frame:
+    """Drehung um ``k`` Vierteldrehungen im Uhrzeigersinn: Anzeigeraum (W×H) -> Arbeitsraum."""
+
+    k: int
+    width: float    # Anzeigeraum
+    height: float
+
+    def _cw(self, pts: np.ndarray, w: float, h: float) -> np.ndarray:
+        # 90° im Uhrzeigersinn (y nach unten): (x, y) -> (h - y, x); neue Größe h × w
+        return np.column_stack([h - pts[:, 1], pts[:, 0]])
+
+    def to_work(self, pts) -> np.ndarray:
+        pts = np.atleast_2d(np.asarray(pts, float))
+        w, h = self.width, self.height
+        for _ in range(self.k % 4):
+            pts = self._cw(pts, w, h)
+            w, h = h, w
+        return pts
+
+    def to_display(self, pts) -> np.ndarray:
+        pts = np.atleast_2d(np.asarray(pts, float))
+        # Rückweg: (4 - k) weitere Vierteldrehungen im Arbeitsraum
+        w, h = self.work_size
+        for _ in range((4 - self.k % 4) % 4):
+            pts = self._cw(pts, w, h)
+            w, h = h, w
+        return pts
+
+    def point_to_display(self, p) -> np.ndarray:
+        return self.to_display(p)[0]
+
+    def bbox_to_display(self, bbox) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = bbox
+        c = self.to_display([[x0, y0], [x1, y1]])
+        return (float(c[:, 0].min()), float(c[:, 1].min()), float(c[:, 0].max()), float(c[:, 1].max()))
+
+    @property
+    def work_size(self) -> tuple[float, float]:
+        return (self.height, self.width) if self.k % 2 else (self.width, self.height)
+
+
+def rotate_vectors(pv: PageVectors, k: int) -> tuple[PageVectors, Frame]:
+    """Liefert die Seite im Arbeitsraum (k Vierteldrehungen im Uhrzeigersinn) und den Frame."""
+    frame = Frame(k % 4, pv.width, pv.height)
+    if frame.k == 0:
+        return pv, frame
+    w, h = frame.work_size
+    out = PageVectors(width=w, height=h)
+    for p in pv.primitives:
+        pls = [frame.to_work(pl) for pl in p.polylines]
+        allp = np.vstack(pls)
+        out.primitives.append(Primitive(index=p.index, color=p.color, width=p.width, filled=p.filled,
+                                        polylines=pls, bbox=(float(allp[:, 0].min()), float(allp[:, 1].min()),
+                                                             float(allp[:, 0].max()), float(allp[:, 1].max())),
+                                        closed=p.closed))
+    return out, frame

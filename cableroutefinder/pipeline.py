@@ -9,7 +9,8 @@ import numpy as np
 from .klp import (CableLabel, KlpStyle, PlanElement, detect_style, extract_cable_labels, extract_elements,
                   find_element, trasse_primitives)
 from .kuep import KuepCable, KuepResult, parse_kuep
-from .pdfvector import PageVectors, load_page_vectors
+from .pdfvector import Frame, PageVectors, load_page_vectors, rotate_vectors
+from .textocr import detect_reading_rotation
 from .router import CableRoute, choose_candidate, route_terminals, snap_candidates, snap_points
 from .trassegraph import GraphParams, build_trasse_graph
 
@@ -78,7 +79,9 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
             graph_params: GraphParams | None = None, endpoint_snap_pt: float = 40.0,
             log=_log_default) -> AnalysisResult:
     log(f"Lese Kabellageplan: {klp_path}")
-    pv: PageVectors = load_page_vectors(klp_path, page_index)
+    pv_display: PageVectors = load_page_vectors(klp_path, page_index)
+    # Gedreht gespeicherte Pläne in Leserichtung auswerten, Ergebnisse am Ende zurückdrehen
+    pv, frame = rotate_vectors(pv_display, detect_reading_rotation(pv_display, log=log))
     style = style or detect_style(pv)
     log(f"KLP-Ebenen: Trasse={style.trasse_width} Kanal={style.kanal_width} Beschriftung={style.label_width}")
 
@@ -94,7 +97,9 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
     kuep = None
     if kuep_path:
         log(f"Lese Kabelübersichtsplan: {kuep_path}")
-        kuep = parse_kuep(load_page_vectors(kuep_path, 0), log=log)
+        kuep_pv = load_page_vectors(kuep_path, 0)
+        kuep_pv, _ = rotate_vectors(kuep_pv, detect_reading_rotation(kuep_pv, colors=("black",), log=log))
+        kuep = parse_kuep(kuep_pv, log=log)
 
     # Kabelliste: aus dem KÜP, sonst alle im KLP beschrifteten Kabel
     if kuep is not None:
@@ -127,7 +132,8 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
         endpoint_cache[name] = ep
         return ep
 
-    result = AnalysisResult(klp_path, page_index, pv.width, pv.height, scale, G, labels, elements, kuep)
+    result = AnalysisResult(klp_path, page_index, pv_display.width, pv_display.height, scale, G, labels,
+                            elements, kuep)
     for cid in cable_ids:
         kc = kuep_by_id.get(cid)
         cable_labels = [lab for lab in labels if cid in lab.cables]
@@ -168,7 +174,31 @@ def analyze(klp_path: str, kuep_path: str | None = None, page_index: int = 0, sc
 
     ok = sum(1 for c in result.cables if c.route.polylines)
     log(f"Kabelwege bestimmt: {ok} von {len(result.cables)} Kabeln")
+    _to_display(result, frame)
     return result
+
+
+def _to_display(res: AnalysisResult, frame: Frame) -> None:
+    """Alle Koordinaten aus dem Arbeitsraum in den Anzeigeraum der Seite umrechnen."""
+    if frame.k == 0:
+        return
+    for n in res.graph.nodes:
+        res.graph.nodes[n]["pos"] = frame.point_to_display(res.graph.nodes[n]["pos"])
+    for _, _, d in res.graph.edges(data=True):
+        d["pts"] = frame.to_display(d["pts"])
+    for lab in res.labels:
+        lab.bbox = frame.bbox_to_display(lab.bbox)
+        if lab.anchor is not None:
+            lab.anchor = frame.point_to_display(lab.anchor)
+        lab.leader = [frame.to_display(pl) for pl in lab.leader]
+    for e in res.elements:
+        e.center = frame.point_to_display(e.center)
+        e.bbox = frame.bbox_to_display(e.bbox)
+    for c in res.cables:
+        r = c.route
+        r.polylines = [frame.to_display(pl) for pl in r.polylines]
+        r.terminals = [frame.point_to_display(p) for p in r.terminals]
+        r.unsnapped = [frame.point_to_display(p) for p in r.unsnapped]
 
 
 def _resolved(G, ep: Endpoint | None, anchors: list[int]) -> Endpoint | None:

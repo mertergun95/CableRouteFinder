@@ -65,3 +65,27 @@ def test_route_lengths_plausible(result, cable_id, kuep_len):
     assert c.route.polylines
     # Weglänge im Plan ist etwas kürzer als die KÜP-Länge (Reserven, Einführungen)
     assert 0.7 * kuep_len <= c.length_m <= 1.1 * kuep_len
+
+
+@needs_tesseract
+def test_rotated_page_gives_same_routes(result, tmp_path):
+    """Gedreht gespeicherter KLP (/Rotate 90): gleiche Kabel, Wege im Anzeigeraum der gedrehten Seite."""
+    import numpy as np
+    import pymupdf
+
+    from cableroutefinder.pipeline import analyze
+    from cableroutefinder.pdfvector import Frame
+
+    rotated = tmp_path / "klp_rot90.pdf"
+    doc = pymupdf.open(KLP)
+    doc[0].set_rotation(90)
+    doc.save(rotated)
+    res = analyze(str(rotated), KUEP, only_cables=["S1307502", "S1307505"], log=lambda *_: None)
+    assert res.page_width < res.page_height          # Anzeigeraum der gedrehten Seite
+    frame = Frame(1, result.page_width, result.page_height)  # ungedreht -> gedreht = 90° im Uhrzeigersinn
+    for cid in ("S1307502", "S1307505"):
+        a = next(c for c in result.cables if c.cable_id == cid)
+        b = next(c for c in res.cables if c.cable_id == cid)
+        assert abs(a.length_m - b.length_m) < 2
+        # Startpunkt stimmt nach Drehung überein
+        assert np.linalg.norm(frame.to_work(a.route.polylines[0][:1])[0] - b.route.polylines[0][0]) < 3

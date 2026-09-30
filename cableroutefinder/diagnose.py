@@ -15,7 +15,8 @@ import networkx as nx
 import pymupdf
 
 from .klp import detect_style, extract_cable_labels, trasse_primitives
-from .pdfvector import RED, load_page_vectors
+from .pdfvector import RED, load_page_vectors, rotate_vectors
+from .textocr import detect_reading_rotation
 from .trassegraph import build_trasse_graph
 
 
@@ -42,6 +43,7 @@ def main(argv=None) -> int:
     log(f"Echter PDF-Text: {len(words)} Wörter, davon Kabelnummern: {len(cable_words)} {cable_words[:10]}")
 
     pv = load_page_vectors(args.klp, args.page)
+    pv_display = pv
     colors = collections.Counter(p.color for p in pv.primitives)
     log(f"Zeichenobjekte: {len(pv.primitives)}  Farben: {dict(colors)}")
     stats = collections.defaultdict(lambda: [0, 0, 0])
@@ -56,6 +58,7 @@ def main(argv=None) -> int:
     for key, (n, small, big) in sorted(stats.items(), key=lambda kv: -kv[1][0])[:25]:
         log(f"  {key}: {n} / {small} / {big}")
 
+    pv, frame = rotate_vectors(pv_display, detect_reading_rotation(pv_display, log=log))
     style = detect_style(pv)
     log(f"Erkannte Ebenen: {style}")
     labels = extract_cable_labels(pv, style, log=log)
@@ -71,13 +74,13 @@ def main(argv=None) -> int:
     sh = page.new_shape()
     derot = page.derotation_matrix
     for u, v, d in G.edges(data=True):
-        sh.draw_polyline([pymupdf.Point(*p) * derot for p in d["pts"]])
+        sh.draw_polyline([pymupdf.Point(*p) * derot for p in frame.to_display(d["pts"])])
     sh.finish(color=(0, 0.4, 1), width=1.2, closePath=False)
     for lab in labels:
-        sh.draw_rect(pymupdf.Rect(lab.bbox) * derot)
+        sh.draw_rect(pymupdf.Rect(frame.bbox_to_display(lab.bbox)) * derot)
         sh.finish(color=(0, 0.7, 0), width=1.0)
         if lab.anchor is not None:
-            sh.draw_circle(pymupdf.Point(*lab.anchor) * derot, 2.5)
+            sh.draw_circle(pymupdf.Point(*frame.point_to_display(lab.anchor)) * derot, 2.5)
             sh.finish(color=(1, 0, 0), fill=(1, 0, 0))
     sh.commit()
     png = os.path.join(args.out, base + "_diagnose.png")
