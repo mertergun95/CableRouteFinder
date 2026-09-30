@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pymupdf
 
+from . import __version__
 from .pipeline import AnalysisResult
 
 # CablePlan rendert die Grundseite mit 160 dpi (MainWindow.LoadPdfFirstPageToBitmap)
@@ -124,6 +125,9 @@ def write_report(res: AnalysisResult, json_path: str, csv_path: str) -> None:
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({
             "klp": os.path.basename(res.klp_path),
+            "klp_path": os.path.abspath(res.klp_path),
+            "tool_version": __version__,
+            "tool_path": os.path.dirname(os.path.abspath(__file__)),
             "scale": res.scale,
             "labels": [{"cables": l.cables, "anchor": None if l.anchor is None else l.anchor.round(2).tolist(),
                         "bbox": [round(v, 2) for v in l.bbox]} for l in res.labels],

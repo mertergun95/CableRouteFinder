@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 
+from . import __version__
 from .export import write_annotated_pdf, write_cableplan_json, write_report
 from .pipeline import analyze
 
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     os.makedirs(args.out, exist_ok=True)
     base = os.path.splitext(os.path.basename(args.klp))[0]
     only = [c.strip() for c in args.cables.split(",")] if args.cables else None
+    print(f"CableRouteFinder {__version__} ({os.path.dirname(os.path.abspath(__file__))})", flush=True)
     res = analyze(args.klp, args.kuep, page_index=args.page, scale=args.scale, only_cables=only)
 
     pdf_out = os.path.join(args.out, f"{base}_kabelwege.pdf")
